@@ -21,6 +21,10 @@ import Post from "./models/Post.js";
 import { users,posts } from "./data/index.js";
 import adminRoute from './routes/admin.js'
 
+
+import {createServer} from 'http';
+import {Server} from 'socket.io';
+
 /* CONFIGURATIONS */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,7 +36,7 @@ app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
 app.use(morgan("tiny"));
 app.use(bodyParser.json({ limit: "30mb", extended: true }));
 app.use(bodyParser.urlencoded({ limit: "30mb", extended: true }));
-app.use(cors());
+app.use(cors({origin:'http://localhost:3000'}));
 app.use("/assets", express.static(path.join(__dirname, 'public/assets')));
 
 /* FILE STORAGE */
@@ -65,10 +69,59 @@ mongoose.connect(process.env.MONGO_URL, {
     useUnifiedTopology: true,
 })
 .then(() => {
-    app.listen(PORT, () => console.log(`Server Port:${PORT}`));
-
+    console.log("DATABASE CONNECTED");
     /* ADD DATA ONE TIME */
 // User.insertMany(users);
 // Post.insertMany(posts);
 })
 .catch((error) => console.log(`${error} did not connected`));
+
+
+const httpServer=createServer(app);
+
+const io=new Server(httpServer,{
+    cors:{
+        origin:'http://localhost:3000'
+    }
+})
+
+let activeUsers =[]
+
+io.on("connection",(socket)=>{
+
+    // add new User
+    socket.on('new-user-add',(newUserId)=>{
+        // if user is not added previously
+        if(!activeUsers.some((user)=>user.userId === newUserId))
+        {
+             activeUsers.push({
+                userId:newUserId,
+                socketId: socket.id
+             })
+        }
+         console.log("Connected Users", activeUsers);
+        io.emit('get-users', activeUsers)
+    })
+
+    //send message
+    socket.on("send-message",(data)=>{
+        const {receiverId}= data;
+        const user = activeUsers.find((user)=>user.userId === receiverId)
+        console.log("Sending from socket to :",receiverId);
+        console.log("Data",data);
+        if(user){
+            io.to(user.socketId).emit("receive-message",data)
+        }
+    })
+
+    socket.on("disconnect",()=>{
+        activeUsers =activeUsers.filter((user)=>user.socketId !==socket.id);
+        console.log("User Disconnected", activeUsers);
+        io.emit('get-users', activeUsers)
+
+    })
+})
+
+httpServer.listen(process.env.PORT,()=>
+    console.log(`Connected on ${process.env.PORT}`)
+)
